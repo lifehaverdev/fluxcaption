@@ -1,19 +1,31 @@
 import fs from 'fs';
 import path from 'path';
 import { Client } from '@gradio/client'; // Import the Gradio Client
+import OpenAI from "openai"; // Default import for OpenAI in ES module
 import dotenv from 'dotenv';
 
 // Load environment variables from .env file
 dotenv.config();
 
+// Initialize OpenAI client
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_SECRET, // Your OpenAI API key from the environment variables
+});
+
+
+
 // Get the Hugging Face token from the .env file
 const hfToken = process.env.HF;
-console.log(hfToken)
+//console.log(hfToken)
 
 // Function to log messages at different stages
 const log = (message) => {
   console.log(`[LOG] ${message}`);
 };
+
+// Sleep function to add a delay between API calls
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 
 // Function to convert local image to Buffer
 const imageToBuffer = (imagePath) => {
@@ -47,55 +59,70 @@ const processImageWithClient = async (imageBuffer, imageFileName) => {
   }
 };
 
-// Function to process images one by one, ensuring success before moving to the next
-const processImages = async (inputFolder, outputFolder, word) => {
+// Function to process images based on mode (Flux or SDXL)
+const processImages = async (inputFolder, outputFolder, word, type, mode) => {
+  log(`${mode}`);
   try {
-    // Read all files from the input folder
     const files = fs.readdirSync(inputFolder);
     log(`Found ${files.length} files in folder ${inputFolder}`);
 
-    // Filter only image files (assuming .png and .jpg)
     const imageFiles = files.filter((file) => file.endsWith('.png') || file.endsWith('.jpg'));
     log(`Filtered ${imageFiles.length} image files`);
 
-    // Process each image file one by one
     for (const imageFile of imageFiles) {
+      
       const imagePath = path.join(inputFolder, imageFile);
-      const outputTextFilePath = path.join(outputFolder, `${path.parse(imageFile).name}.txt`);
-
-      // Check if the .txt file already exists in the output folder
-      if (fs.existsSync(outputTextFilePath)) {
-        log(`Text file already exists for ${imageFile}, skipping.`);
-        continue; // Skip this image if the .txt file exists
-      }
-
-      const imageBuffer = imageToBuffer(imagePath); // Convert the image to a buffer
-
-      // Process this image with the Gradio client
-      const resultText = await processImageWithClient(imageBuffer, imageFile);
-
-      // If resultText is null, skip this file and continue with the next
-      if (!resultText) {
-        log(`Failed to process image: ${imageFile}. Continuing to the next image.`);
-        continue;
-      }
-
-      // Prepend the word to the resultText
-      const finalText = `${word} ${resultText}`;
-
+      const outputTextFilePath = path.join(outputFolder, `${path.parse(imageFile).name}.txt`); //.txt usually
+      
       // Ensure the output folder exists
       if (!fs.existsSync(outputFolder)) {
         fs.mkdirSync(outputFolder, { recursive: true });
+        log(`Created output folder: ${outputFolder}`);
       }
 
-      // Clone the image to the output folder
-      const outputImagePath = path.join(outputFolder, imageFile);
-      fs.copyFileSync(imagePath, outputImagePath);
-      log(`Copied image to ${outputImagePath}`);
+      // Flux Mode (skip Gradio, refine existing text file)
+      if (mode == 'flux') {
+        
+        if (!fs.existsSync(outputTextFilePath)) {
+          log(`Text file for ${imageFile} does not exist in the flux dataset, skipping.`);
+          continue;
+        }
 
-      // Write the result to a text file with the same name as the image
-      fs.writeFileSync(outputTextFilePath, finalText); // Write the prediction result with the word
-      log(`Saved result to ${outputTextFilePath}`);
+        const existingText = fs.readFileSync(outputTextFilePath, 'utf-8');
+
+        const refinedText = await refineWithOpenAI(word, existingText, type);
+        if (refinedText) {
+          fs.writeFileSync(outputTextFilePath, refinedText);
+          log(`Updated final refined result for ${imageFile} to ${outputTextFilePath}`);
+        } else {
+          log(`File not refined for ${imageFile}. Skipping.`);
+        }
+
+        await sleep(60000); // Enforce 10-second delay between requests
+
+      // SDXL Mode (process through Gradio first)
+      } else if (mode == 'sdxl') {
+        if (fs.existsSync(outputTextFilePath)) {
+          log(`Text file already exists for ${imageFile}, skipping.`);
+          continue;
+        }
+
+        const imageBuffer = fs.readFileSync(imagePath);
+        const resultText = await processImageWithClient(imageBuffer, imageFile);
+
+        if (!resultText) {
+          log(`Failed to process image: ${imageFile}. Skipping.`);
+          continue;
+        }
+
+        const refinedText = await refineWithOpenAI(word, resultText, type);
+        if (refinedText) {
+          fs.writeFileSync(outputTextFilePath, refinedText);
+          log(`Updated final refined result for ${imageFile} to ${outputTextFilePath}`);
+        }
+
+        await sleep(60000); // Enforce 10-second delay between requests
+      }
     }
 
     log('All images processed successfully.');
@@ -104,28 +131,71 @@ const processImages = async (inputFolder, outputFolder, word) => {
   }
 };
 
+// Function to refine text with OpenAI and handle rate limiting with retries
+const refineWithOpenAI = async (triggerWord, rawCaption, type) => {
+  try {
+    let prompt = `I am providing a text file. The trigger word is "${triggerWord}". `;
+
+    if (type === 'subject') {
+      prompt += `The trigger word refers to a character or subject in the image, such as "man", "boy", "figure". Your task is to replace appropriate subject-related words with the trigger word. `;
+    } else if (type === 'style') {
+      prompt += `The trigger word refers to the artistic style of the image. Your task is to insert the trigger word where it makes sense, especially in references to the overall style, textures, or aesthetic elements. `;
+    }
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        { "role": "user", "content": prompt + '\n\n' + rawCaption }
+      ],
+      max_tokens: 1000
+    });
+
+    return completion.choices[0].message.content.trim();
+    
+  } catch (error) {
+    if (error.response && error.response.status === 429) {
+      const retryAfter = parseFloat(error.response.headers['retry-after']) || 60; // Wait for 60 seconds by default
+      console.error(`Rate limit reached. Retrying after ${retryAfter} seconds...`);
+      await sleep(retryAfter * 1000); // Convert seconds to milliseconds
+      return await refineWithOpenAI(triggerWord, rawCaption, type); // Retry the request after sleep
+    }
+
+    console.error(`Error refining text with OpenAI: ${error.message}`);
+    return null; // Return null for unprocessed files
+  }
+};
+
+
 // Main function to handle command-line arguments
 const main = async () => {
-  const args = process.argv.slice(2); // Get command-line arguments
+  const args = process.argv.slice(2);
 
-  if (args.length !== 3) {
-    console.error('Usage: node main.mjs <inputFolder> <outputFolder> <WORD>');
+  if (args.length !== 4) {
+    console.error('Usage: node main.mjs <inputFolder> <outputFolder> <WORD> <MODE>');
     process.exit(1);
   }
 
   const inputFolder = args[0];
   const outputFolder = args[1];
-  const word = args[2]; // Get the word argument
+  const word = args[2];
+  const type = args[3];
+  let mode;
+  if(inputFolder == outputFolder) {
+    mode = 'flux'
+  } else {
+    mode = 'sdxl'
+  }
+  //const mode = args[3]; // Either 'flux' or 'sdxl'
 
-  // Check if input folder exists
-  if (!fs.existsSync(inputFolder)) {
-    console.error(`Error: Input folder "${inputFolder}" does not exist.`);
+  if (mode !== 'flux' && mode !== 'sdxl') {
+    console.error('Error: The <MODE> argument must be either "flux" or "sdxl".');
     process.exit(1);
   }
-
-  // Process the images
-  await processImages(inputFolder, outputFolder, word);
+  console.log('mode',mode)
+  await processImages(inputFolder, outputFolder, word, type, mode);
+  // const processImages = async (inputFolder, outputFolder, word, type, mode) => {
 };
 
 // Execute the main function
 main();
+

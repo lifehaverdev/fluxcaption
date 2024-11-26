@@ -1,1 +1,6 @@
 .env
+# Ignore node_modules in the root and all subdirectories
+node_modules/
+
+# Ignore dependency folders in submodules if any
+**/node_modules/

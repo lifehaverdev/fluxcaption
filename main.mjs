@@ -12,7 +12,8 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_SECRET, // Your OpenAI API key from the environment variables
 });
 
-
+// At the top of the file, after the imports
+const DEFAULT_GRADIO_URL = "http://127.0.0.1:7860/";
 
 // Get the Hugging Face token from the .env file
 const hfToken = process.env.HF;
@@ -35,10 +36,10 @@ const imageToBuffer = (imagePath) => {
 };
 
 // Function to connect to Gradio and process the image using Gradio Client
-const processImageWithClient = async (imageBuffer, imageFileName) => {
+const processImageWithClient = async (imageBuffer, imageFileName, gradioUrl = DEFAULT_GRADIO_URL) => {
   try {
     // Connect to the Gradio app using the Client and the Hugging Face token
-    const client = await Client.connect("http://127.0.0.1:7860/", { hf_token: hfToken });
+    const client = await Client.connect(gradioUrl, { hf_token: hfToken });
 
     log(`Connected to Gradio app for image: ${imageFileName}`);
 
@@ -165,6 +166,10 @@ const refineWithOpenAI = async (triggerWord, rawCaption, type) => {
   }
 };
 
+// Add error handling for missing environment variables
+if (!process.env.OPENAI_SECRET || !process.env.HF) {
+  throw new Error('Required environment variables OPENAI_SECRET and HF must be set');
+}
 
 // Main function to handle command-line arguments
 const main = async () => {

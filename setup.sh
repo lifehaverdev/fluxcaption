@@ -1,38 +1,33 @@
 #!/bin/bash
 
-# Check for required environment variable
-if [ -z "$GITHUB_TOKEN" ]; then
-    echo "Error: GITHUB_TOKEN environment variable is not set"
-    echo "Please run: export GITHUB_TOKEN=your_github_token"
-    exit 1
-fi
+echo "🚀 Starting setup process..."
 
-# Install system dependencies
+echo "📦 Updating system package lists..."
 apt-get update
+
+echo "📥 Installing system dependencies (nodejs, npm, git, python3-pip)..."
 apt-get install -y nodejs npm git python3-pip
 
-# Create workspace structure
+echo "📁 Creating workspace directory structure..."
 mkdir -p /workspace/downloads
 mkdir -p /workspace/training_data
 mkdir -p /workspace/lora_output
 
-# Clone the Hugging Face repository
+echo "🔄 Cloning the Hugging Face repository..."
 cd /workspace
 git clone https://huggingface.co/spaces/fancyfeast/joy-caption-pre-alpha
 cd joy-caption-pre-alpha
 
-# Install Python dependencies (assuming there's a requirements.txt)
-if [ -f "requirements.txt" ]; then
-    pip install -r requirements.txt
-fi
+echo "🐍 Installing Python dependencies from requirements.txt..."
+pip install -v -r requirements.txt
 
-# Install Node dependencies from package-lock.json
+echo "📦 Installing Node.js dependencies..."
 npm ci
 
-# Copy example.env to .env if it doesn't exist
+echo "⚙️ Setting up environment file..."
 if [ ! -f .env ]; then
     cp example.env .env
-    echo "Created .env file. Please edit it with your API tokens!"
+    echo "✨ Created .env file. Please edit it with your API tokens!"
 fi
 
-echo "Setup complete! Please edit /workspace/joy-caption-pre-alpha/.env with your tokens"
+echo "✅ Setup complete! Please edit /workspace/joy-caption-pre-alpha/.env with your tokens"

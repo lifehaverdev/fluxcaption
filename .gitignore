@@ -1,6 +1,17 @@
 .env
+
 # Ignore node_modules in the root and all subdirectories
 node_modules/
-
-# Ignore dependency folders in submodules if any
 **/node_modules/
+
+# Ignore npm debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Ignore package lock files
+package-lock.json
+yarn.lock
+
+# Ignore .DS_Store files
+.DS_Store

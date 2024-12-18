@@ -19,7 +19,8 @@ class RunpodExecutor {
             datasetDownloadPath: '/workspace/downloads',
             configDatasetPath: '/workspace/training_data',
             loraOutputPath: '/workspace/lora_output',
-            repoUrl: 'https://github.com/yourusername/joy-caption-pre-alpha.git'
+            repoUrl: 'https://github.com/yourusername/joy-caption-pre-alpha.git',
+            joyCaptionBranch: 'main'
         };
         logger.info('RunpodExecutor initialized with configuration:');
         logger.info(JSON.stringify(this.config, null, 2));
@@ -65,8 +66,12 @@ class RunpodExecutor {
                 await this.executeCommand('git pull', { cwd: this.config.joyCaptionPath });
             } else {
                 logger.info('Cloning repository...');
+                const tokenizedUrl = this.config.repoUrl.replace(
+                    'https://',
+                    `https://oauth2:${process.env.GITHUB_TOKEN}@`
+                );
                 await this.executeCommand(
-                    `git clone ${this.config.repoUrl} ${this.config.joyCaptionPath}`
+                    `git clone ${tokenizedUrl} ${this.config.joyCaptionPath} --branch ${this.config.joyCaptionBranch}`
                 );
             }
 
